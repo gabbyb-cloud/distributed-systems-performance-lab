@@ -1,4 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+
+from app.database import fetch_item
 
 app = FastAPI()
 
@@ -10,9 +12,11 @@ def root():
 
 @app.get("/items/{item_id}")
 def get_item(item_id: int):
-    return {
-        "item_id": item_id,
-        "name": f"item-{item_id}",
-        "source": "application",
-    }
+    item = fetch_item(item_id)
+
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    return item
+
 
