@@ -1,6 +1,11 @@
+import os
+
+from dotenv import load_dotenv
 from psycopg_pool import ConnectionPool
 
-DATABASE_URL = "postgresql://labuser:labpassword@localhost:5432/performance_lab"
+load_dotenv()
+
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 pool = ConnectionPool(
     conninfo=DATABASE_URL,
@@ -26,4 +31,5 @@ def fetch_item(item_id: int):
         "name": row[1],
         "source": "postgresql",
     }
+
 

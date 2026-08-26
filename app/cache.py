@@ -1,15 +1,19 @@
 import json
+import os
 
 import redis
+from dotenv import load_dotenv
 from redis.backoff import NoBackoff
 from redis.exceptions import RedisError
 from redis.retry import Retry
 
 from app.metrics import CACHE_ERRORS, CACHE_HITS, CACHE_MISSES
 
+load_dotenv()
+
 redis_client = redis.Redis(
-    host="localhost",
-    port=6379,
+    host=os.environ["REDIS_HOST"],
+    port=int(os.environ["REDIS_PORT"]),
     decode_responses=True,
     socket_connect_timeout=0.1,
     socket_timeout=0.1,
@@ -42,3 +46,4 @@ def cache_item(item):
     except RedisError:
         CACHE_ERRORS.inc()
         
+

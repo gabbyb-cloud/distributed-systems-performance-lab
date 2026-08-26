@@ -8,6 +8,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    env:
+      DATABASE_URL: postgresql://labuser:labpassword@localhost:5432/performance_lab
+      REDIS_HOST: localhost
+      REDIS_PORT: "6379"
+
     services:
       postgres:
         image: postgres:17
@@ -50,4 +55,4 @@ jobs:
       - name: Run tests
         run: |
           python -m pytest -v
-          
+
