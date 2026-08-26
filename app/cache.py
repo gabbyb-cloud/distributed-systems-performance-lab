@@ -5,6 +5,8 @@ from redis.backoff import NoBackoff
 from redis.exceptions import RedisError
 from redis.retry import Retry
 
+from app.metrics import CACHE_ERRORS, CACHE_HITS, CACHE_MISSES
+
 redis_client = redis.Redis(
     host="localhost",
     port=6379,
@@ -19,11 +21,14 @@ def get_cached_item(item_id: int):
     try:
         value = redis_client.get(f"item:{item_id}")
     except RedisError:
+        CACHE_ERRORS.inc()
         return None
 
     if value is None:
+        CACHE_MISSES.inc()
         return None
 
+    CACHE_HITS.inc()
     return json.loads(value)
 
 
@@ -35,5 +40,5 @@ def cache_item(item):
             ex=60,
         )
     except RedisError:
-        pass
-    
+        CACHE_ERRORS.inc()
+        
