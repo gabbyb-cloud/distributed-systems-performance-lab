@@ -51,8 +51,8 @@ async def main():
     successes = sum(success for _, success in results)
     errors = TOTAL_REQUESTS - successes
 
-    print("\nPostgreSQL Baseline")
-    print("-------------------")
+    print("\nPerformance Benchmark")
+    print("---------------------")
     print(f"Requests:          {TOTAL_REQUESTS}")
     print(f"Concurrency:       {CONCURRENCY}")
     print(f"Throughput:        {TOTAL_REQUESTS / elapsed:.2f} req/s")
