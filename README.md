@@ -1,197 +1,48 @@
 # Distributed Systems Performance Lab
 
-A FastAPI performance and resilience lab exploring how **PostgreSQL connection pooling, Redis caching, dependency failure, and concurrency** affect backend behavior.
+A FastAPI performance and resilience lab that measures how PostgreSQL connection pooling, Redis caching, dependency failure, and concurrency change backend behavior.
 
-The project is designed around a practical reliability question:
+[![CI](https://github.com/gabbyb-cloud/distributed-systems-performance-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/gabbyb-cloud/distributed-systems-performance-lab/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/Python-3.14-blue)
 
-> How does a backend behave as load changes, dependencies fail, and infrastructure choices change?
+## Why it exists
 
-## Stack
+Backend performance problems are often blamed on the wrong component. I built this lab to compare concrete changes—database connection reuse, caching, concurrency, and dependency failure—and see which ones actually matter for a small API workload.
 
-Python · FastAPI · PostgreSQL · Redis · Docker Compose · Prometheus client · pytest · GitHub Actions
+The goal is to connect performance testing with reliability engineering: measure the bottleneck, observe failure behavior, and avoid treating local benchmark numbers as production capacity.
 
----
+## Architecture
 
-## Key Findings
-
-The most important result from the recorded local experiments was that **PostgreSQL connection pooling produced the largest performance improvement for this workload**.
-
-Measured throughput increased from:
-
-```text
-223.45 req/s  →  640.24 req/s
+```mermaid
+flowchart LR
+    Client[Benchmark client] --> API[FastAPI API]
+    API --> Cache[Redis]
+    Cache -->|hit| API
+    Cache -->|miss or error| Pool[PostgreSQL connection pool]
+    Pool --> DB[(PostgreSQL)]
+    API --> Metrics[/Prometheus metrics/]
 ```
 
-Redis cache hits measured **652.08 req/s**, only a small additional improvement over the pooled PostgreSQL result for this particular primary-key lookup workload.
+Redis is treated as an optimization rather than the source of truth. If a Redis read fails, requests can fall back to PostgreSQL as long as the database remains available.
 
-During the Redis-unavailable experiment, requests continued through PostgreSQL fallback instead of failing solely because the cache dependency was unavailable.
+## Key design decisions
 
-A separate concurrency experiment also showed that more concurrency was not automatically better: throughput peaked at concurrency 10 among the tested levels of 1, 10, 25, and 50, while higher concurrency increased tail latency and reduced throughput.
+- **Measure before optimizing.** The project compares baseline database access, pooled PostgreSQL, Redis cache hits, and Redis failure instead of assuming a cache is automatically the best improvement.
+- **Reuse database connections.** PostgreSQL access uses a connection pool so requests do not repeatedly pay connection setup cost.
+- **Treat Redis as optional.** Cache misses and Redis read errors route to PostgreSQL rather than turning a cache outage into an application outage.
+- **Bound dependency behavior.** Redis connection and socket timeouts are set to 0.1 seconds with retries disabled so a slow cache does not stall requests indefinitely.
+- **Track tail latency, not just averages.** Benchmarks record throughput, average latency, p95, and p99 because slow requests are hidden by averages alone.
+- **Test concurrency as a variable.** The lab compares multiple concurrency levels rather than assuming more parallelism always improves throughput.
 
-These results are workload-specific local measurements, not production-capacity claims.
+## Quick start
 
----
-
-## Reliability Questions Explored
-
-| Question | What the lab tests |
-| --- | --- |
-| Does database connection reuse matter? | PostgreSQL baseline compared with connection pooling |
-| Does caching always improve performance? | Redis cache-hit performance compared with pooled PostgreSQL |
-| What happens if Redis becomes unavailable? | Requests fall back to PostgreSQL |
-| How does concurrency affect the service? | Throughput and tail latency measured at multiple concurrency levels |
-| Can dependency behavior be observed? | Application metrics expose request and fallback behavior |
-| Are failure paths tested? | Automated tests cover Redis errors and PostgreSQL fallback routing |
-
----
-
-## Engineering Focus
-
-- PostgreSQL connection pooling
-- Redis caching and expiration
-- Graceful database fallback when Redis fails
-- Timeout and retry configuration
-- Throughput measurement
-- Average, p95, and p99 latency analysis
-- Concurrency testing
-- Dependency-failure behavior
-- Prometheus-format application metrics
-- Automated testing and CI
-
----
-
-## Recorded Results
-
-These local experiments used 200 measured requests per run at concurrency 10.
-
-The baseline, pooling, and cache-hit experiments used five runs each. Redis-unavailable testing used six runs. All recorded runs reported zero measured request errors.
-
-| Experiment | Throughput | Average latency | p95 | p99 |
-| --- | ---: | ---: | ---: | ---: |
-| PostgreSQL baseline | 223.45 req/s | 44.67 ms | 77.22 ms | 113.41 ms |
-| PostgreSQL with pooling | 640.24 req/s | 15.36 ms | 28.59 ms | 38.73 ms |
-| Redis cache hits | 652.08 req/s | 15.38 ms | 33.27 ms | 48.29 ms |
-| Redis unavailable | 395.10 req/s | 24.87 ms | 40.82 ms | 50.54 ms |
-
-### What the measurements suggest
-
-**Connection pooling** produced the largest improvement in these experiments.
-
-**Redis** offered little additional benefit for this small local primary-key lookup workload once PostgreSQL pooling was enabled.
-
-**Redis failure** degraded performance, but requests continued through PostgreSQL fallback.
-
-**Higher concurrency** did not continuously improve throughput. Beyond the best tested level, tail latency increased while throughput declined.
-
-These are historical, workload-specific measurements. Hardware and system load affect results. The current code always uses connection pooling and checks Redis first; running it unchanged does not recreate the earlier configurations without pooling or caching.
-
-See [experiments/](experiments/) for the recorded configurations and results.
-
----
-
-## Request and Failure Flow
-
-```text
-Client request
-      |
-      v
-Check Redis
-   |      |
- hit    miss/error
-   |      |
-   v      v
-return   PostgreSQL pool
-cache        |
-result       v
-          query item
-             |
-      +------+------+
-      |             |
-    found        missing
-      |             |
-      v             v
-attempt cache     HTTP 404
-write
-      |
-      v
-return response
-```
-
-The design treats Redis as an optimization rather than the source of truth.
-
-If a Redis read fails, the request can continue through PostgreSQL as long as the database remains available.
-
-PostgreSQL uses a connection pool with a minimum of 1 and a maximum of 10 connections.
-
-Redis connection and socket timeouts are each 0.1 seconds, with retries disabled. These are per-operation settings, not an overall HTTP deadline.
-
-The PostgreSQL fallback counter includes ordinary cache misses as well as Redis failures.
-
----
-
-## Resilience Behavior
-
-The Redis failure path demonstrates a simple reliability principle:
-
-```text
-Dependency failure
-      |
-      v
-Detect Redis error
-      |
-      v
-Use PostgreSQL fallback
-      |
-      v
-Return request result
-      |
-      v
-Expose fallback through metrics
-```
-
-This does **not** make the service fully fault tolerant—PostgreSQL must still be available—but it prevents a cache outage from automatically becoming an application outage.
-
----
-
-## Observability
-
-The application exposes Prometheus-format metrics at:
-
-```text
-/metrics
-```
-
-The lab uses metrics to make application and dependency behavior observable rather than evaluating performance only from client-side benchmark output.
-
-Metrics are exposed by the application; collecting and visualizing them requires separate monitoring infrastructure.
-
----
-
-## Run Locally
-
-### Requirements
-
-- Python 3.14
-- Docker with Docker Compose
-- A shell supporting the commands below, such as Ubuntu or WSL
-
-From the repository root, create configuration for a fresh checkout:
+Requirements: Python 3.14, Docker with Docker Compose, and a shell such as Ubuntu or WSL.
 
 ```bash
+git clone https://github.com/gabbyb-cloud/distributed-systems-performance-lab.git
+cd distributed-systems-performance-lab
 cp .env.example .env
-```
-
-Review the local development settings in `.env`. Preserve an existing configuration instead of overwriting it.
-
-Start PostgreSQL and Redis:
-
-```bash
 docker compose up -d
-```
-
-Create a Python environment, install dependencies, and start FastAPI:
-
-```bash
 python3.14 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
@@ -200,19 +51,21 @@ uvicorn app.main:app
 
 The API runs at `http://127.0.0.1:8000`.
 
-| Endpoint | Purpose |
-| --- | --- |
-| `/` | Application introduction |
-| `/items/1` | Item lookup used by the benchmarks |
-| `/metrics` | Prometheus-format application metrics |
+Useful endpoints:
 
-The database initialization script runs when PostgreSQL creates a new data volume. It does not automatically rerun against an existing volume.
+- `/` — application introduction
+- `/items/1` — item lookup used by the benchmarks
+- `/metrics` — Prometheus-format application metrics
 
----
+Stop the supporting services with:
 
-## Tests
+```bash
+docker compose down
+```
 
-With the virtual environment activated:
+## Testing
+
+Run the test suite with:
 
 ```bash
 python -m pytest -v
@@ -220,23 +73,56 @@ python -m pytest -v
 
 The current suite contains eight tests covering:
 
-- Root endpoint response
-- Cached item responses
+- root endpoint behavior
+- cached item responses
 - PostgreSQL fallback routing
-- Missing item responses
-- Cache reads and misses
+- missing item responses
+- cache reads and misses
 - Redis read errors
 - Redis write errors
 
-The tests replace database queries and Redis operations with controlled substitutes. They verify application behavior without establishing end-to-end database availability or performance.
+The tests use controlled substitutes for Redis and database operations. That makes failure paths deterministic, but it also means they do not prove real PostgreSQL or Redis availability end to end.
 
-GitHub Actions runs the suite on pushes and pull requests using Python 3.14.
+GitHub Actions runs the test suite on pushes and pull requests using Python 3.14.
 
----
+## Reliability and tradeoffs
 
-## Benchmarks
+**Redis failure:** cache read errors fall back to PostgreSQL instead of failing the request solely because Redis is unavailable. This improves resilience to a cache outage, but PostgreSQL is still a required dependency.
 
-Keep the API running. In a second terminal, enter the repository directory and activate the virtual environment:
+**Connection pooling:** pooling reduced connection overhead substantially for this workload. The tradeoff is that pool sizing becomes part of system behavior and can become a bottleneck if configured poorly.
+
+**Caching:** Redis produced only a small additional improvement over pooled PostgreSQL for the tested primary-key lookup. That does not mean caching is generally ineffective; it means this workload was too small and simple to justify a larger claim.
+
+**Concurrency:** higher concurrency did not continuously increase throughput. Beyond the best tested level, tail latency increased and throughput declined, showing that extra parallelism can create contention instead of useful capacity.
+
+**Timeouts:** short Redis timeouts keep the fallback path responsive, but aggressive timeout values can also cause healthy-but-slow operations to be abandoned too quickly in a different environment.
+
+**Observability:** the service exposes Prometheus-format metrics, but this repository does not include a full monitoring stack. Collection, dashboards, and alerting would need separate infrastructure.
+
+**Benchmark scope:** all measurements are local, short-duration experiments. They are useful for comparing configurations in this lab, not for predicting production capacity.
+
+## Results
+
+The recorded experiments used 200 measured requests per run at concurrency 10. Baseline, pooled PostgreSQL, and Redis cache-hit tests used five runs each; the Redis-unavailable test used six. All recorded runs reported zero measured request errors.
+
+| Experiment | Throughput | Average latency | p95 | p99 |
+| --- | ---: | ---: | ---: | ---: |
+| PostgreSQL baseline | 223.45 req/s | 44.67 ms | 77.22 ms | 113.41 ms |
+| PostgreSQL with pooling | 640.24 req/s | 15.36 ms | 28.59 ms | 38.73 ms |
+| Redis cache hits | 652.08 req/s | 15.38 ms | 33.27 ms | 48.29 ms |
+| Redis unavailable | 395.10 req/s | 24.87 ms | 40.82 ms | 50.54 ms |
+
+The largest improvement in these local experiments came from PostgreSQL connection pooling: throughput increased from **223.45 req/s to 640.24 req/s** while average and tail latency dropped substantially.
+
+Redis cache hits reached **652.08 req/s**, only a small improvement over pooled PostgreSQL for this workload. When Redis was unavailable, throughput fell to **395.10 req/s**, but requests continued through PostgreSQL fallback.
+
+A separate concurrency experiment tested levels 1, 10, 25, and 50. Throughput peaked at concurrency 10 among the tested values; higher concurrency increased tail latency and reduced throughput.
+
+These measurements are workload-specific and hardware-dependent. The current code always uses pooling and checks Redis first, so reproducing the historical baseline configurations requires the corresponding recorded experiment setup in [`experiments/`](experiments/).
+
+## Run the benchmarks
+
+Keep the API running, then in a second terminal:
 
 ```bash
 source .venv/bin/activate
@@ -244,76 +130,20 @@ python benchmarks/baseline.py
 python benchmarks/concurrency.py
 ```
 
-Both scripts target:
+The baseline script measures 200 requests at concurrency 10 against the currently running configuration.
 
-```text
-http://127.0.0.1:8000/items/1
-```
+The concurrency script runs five trials at each concurrency level: 1, 10, 25, and 50. Each trial measures 200 requests, with 10 warm-up requests before measurement.
 
-The baseline script measures the currently running configuration with 200 requests at concurrency 10.
+Measurement notes:
 
-The concurrency script uses five trials at each concurrency level: 1, 10, 25, and 50. Each trial measures 200 requests. Both scripts issue 10 warm-up requests before each measured run.
+- latency starts after a request acquires a client concurrency slot
+- latency statistics include successful and failed measured requests
+- throughput counts all attempted measured requests
+- concurrency summaries average trial-level percentiles rather than combining every request into one percentile calculation
+- error counts should be interpreted alongside latency and throughput
 
-### Measurement details
+## What I'd do next
 
-- Latency starts after acquiring a client concurrency slot, excluding time waiting for that slot.
-- Latency statistics include successful and failed measured requests.
-- Throughput counts all attempted measured requests.
-- The concurrency summary averages trial-level percentiles rather than calculating percentiles across all requests combined.
-- Error counts should be read alongside latency and throughput.
-
-These short local runs do not establish production capacity.
-
----
-
-## Engineering Takeaways
-
-### Measure before optimizing
-
-The experiments showed that the largest improvement did not come from adding a cache. For this workload, connection pooling mattered much more.
-
-### More concurrency is not automatically more throughput
-
-Increasing concurrent work can increase contention and tail latency rather than continually increasing useful throughput.
-
-### Optional dependencies should fail gracefully when practical
-
-Redis improves the request path, but the service can continue through PostgreSQL when Redis is unavailable.
-
-### Tail latency matters
-
-Average latency alone does not describe the experience of slower requests, so the lab records p95 and p99 measurements as well.
-
-### Performance claims need context
-
-The README records workload size, concurrency, run count, and limitations so local benchmark results are not presented as production capacity.
-
----
-
-## Limitations
-
-- Results come from a small local item-lookup workload.
-- Earlier experiment configurations require their corresponding historical code or setup to reproduce.
-- Mocked tests do not replace integration testing with real services.
-- Redis fallback does not protect against PostgreSQL failure.
-- Metrics are exposed by the application; collecting and visualizing them requires separate monitoring infrastructure.
-
----
-
-## Shutdown
-
-Stop FastAPI with Ctrl+C, then stop the supporting containers:
-
-```bash
-docker compose down
-```
-
-The PostgreSQL data volume is preserved.
-
----
-
-## Engineering Focus
-
-This lab connects backend performance testing with reliability engineering by asking not only **how fast is the service?**, but also:
-
-**What becomes the bottleneck? What happens under concurrency? What happens when a dependency fails? And how do we measure the result?**
+- Add integration tests that use real PostgreSQL and Redis containers so fallback behavior is verified beyond mocked dependencies.
+- Add a Prometheus/Grafana stack and separate metrics for cache misses versus Redis failures, making dependency behavior easier to distinguish operationally.
+- Run longer, concurrent load tests with multiple query shapes and dataset sizes before drawing broader conclusions about capacity or caching value.
