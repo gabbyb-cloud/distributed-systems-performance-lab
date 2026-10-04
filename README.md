@@ -5,7 +5,7 @@ A FastAPI performance and resilience lab that measures how PostgreSQL connection
 [![CI](https://github.com/gabbyb-cloud/distributed-systems-performance-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/gabbyb-cloud/distributed-systems-performance-lab/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.14-blue)
 
-## Why it exists
+## Overview
 
 Backend performance problems are often blamed on the wrong component. I built this lab to compare concrete changes—database connection reuse, caching, concurrency, and dependency failure—and see which ones actually matter for a small API workload.
 
@@ -63,7 +63,7 @@ Stop the supporting services with:
 docker compose down
 ```
 
-## Testing
+## Testing and evidence
 
 Run the test suite with:
 
@@ -85,7 +85,7 @@ The tests use controlled substitutes for Redis and database operations. That mak
 
 GitHub Actions runs the test suite on pushes and pull requests using Python 3.14.
 
-## Reliability and tradeoffs
+## Tradeoffs and limits
 
 **Redis failure:** cache read errors fall back to PostgreSQL instead of failing the request solely because Redis is unavailable. This improves resilience to a cache outage, but PostgreSQL is still a required dependency.
 
@@ -142,7 +142,7 @@ Measurement notes:
 - concurrency summaries average trial-level percentiles rather than combining every request into one percentile calculation
 - error counts should be interpreted alongside latency and throughput
 
-## What I'd do next
+## Next steps
 
 - Add integration tests that use real PostgreSQL and Redis containers so fallback behavior is verified beyond mocked dependencies.
 - Add a Prometheus/Grafana stack and separate metrics for cache misses versus Redis failures, making dependency behavior easier to distinguish operationally.
